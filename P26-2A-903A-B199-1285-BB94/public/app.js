@@ -1,75 +1,147 @@
-const CHAVE_PROJETO = "P26-2A-903A-B199-1285-BB94";
+let currentUser = null;
 
-const discordSession = {
-  user_id: "discord_" + CHAVE_PROJETO.slice(-4).toLowerCase(),
-  username: "Jose",
-  avatar: "https://cdn.discordapp.com/embed/avatars/0.png",
-};
+async function verificarSessao() {
+  const res = await fetch("/api/auth/me");
+  const data = await res.json();
+  const authArea = document.getElementById("auth-area");
+  const createSection = document.getElementById("create-section");
 
-function renderDiscordHeader() {
-  const el = document.getElementById("discordUserText");
-  if (el) {
-    el.textContent = "Discord: " + discordSession.username + " (" + discordSession.user_id + ")";
+  if (data.authenticated) {
+    currentUser = data.user;
+    createSection.classList.remove("hidden");
+
+    const avatarHtml = currentUser.avatar
+      ? `<img src="${currentUser.avatar}" alt="Avatar" class="avatar" />`
+      : "";
+
+    authArea.innerHTML = `
+      <div class="user-profile">
+        ${avatarHtml}
+        <span><strong>${currentUser.nome}</strong> <small class="meta">(#${currentUser.discord_id})</small></span>
+        <button id="btn-logout" type="button" class="btn btn-outline">Sair</button>
+      </div>
+    `;
+    document.getElementById("btn-logout").addEventListener("click", logout);
+  } else {
+    currentUser = null;
+    createSection.classList.add("hidden");
+    authArea.innerHTML = `
+      <a href="/api/auth/discord" class="btn btn-discord">Entrar com Discord</a>
+    `;
   }
 }
 
-async function carregarStatus() {
-  const listEl = document.getElementById("recordsList");
-  try {
-    const res = await fetch("/api/status");
-    const data = await res.json();
-    listEl.innerHTML = "";
-        if (data.sessionUser) {
-      discordSession.user_id = data.sessionUser.userId;
-      discordSession.username = data.sessionUser.username;
-      discordSession.avatar = data.sessionUser.avatar || discordSession.avatar;
-      renderDiscordHeader();
-    }
-    const items = Array.isArray(data.ultimosRegistros) ? data.ultimosRegistros : [];
-    if (items.length === 0) {
-      const li = document.createElement("li");
-      li.textContent = "API Online (" + (data.d1Connected ? "D1 Conectado ✅" : "Modo Diagnóstico Serverless ✅") + "). Nenhum registro gravado ainda.";
-      listEl.appendChild(li);
-      return;
-    }
-    items.forEach((item) => {
-      const li = document.createElement("li");
-      li.textContent = "[" + (item.created_at || "agora") + "] " + item.username + " (" + item.user_id + "): " + item.conteudo;
-      listEl.appendChild(li);
-    });
-  } catch (err) {
-    listEl.innerHTML = "<li>Modo estático local. Publique no Cloudflare Pages para ativar /api/status.</li>";
-  }
+async function logout() {
+  await fetch("/api/auth/me", { method: "POST" });
+  window.location.reload();
 }
 
-document.getElementById("sendBtn")?.addEventListener("click", async () => {
-  const input = document.getElementById("recordInput");
-  const statusEl = document.getElementById("statusMessage");
-  const conteudo = (input.value || "").trim();
-  if (!conteudo) return;
+async function carregarEventos() {
+  const grid = document.getElementById("events-grid");
+  const res = await fetch("/api/eventos");
+  const eventos = await res.json();
 
-  statusEl.textContent = "Enviando para Cloudflare Function...";
-  try {
-    const res = await fetch("/api/status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId: discordSession.user_id,
-        username: discordSession.username,
-        conteudo,
-      }),
-    });
-    if (res.ok) {
-      input.value = "";
-      statusEl.textContent = "✓ Registro validado e processado na borda!";
-      await carregarStatus();
+  if (!eventos.length) {
+    grid.innerHTML = `<p class="meta">Nenhum evento cadastrado ainda. Faça login e crie o primeiro!</p>`;
+    return;
+  }
+
+  grid.innerHTML = eventos.map((ev) => {
+    const lotado = ev.confirmados_count >= ev.capacidade_maxima;
+    const esperaBadge = ev.espera_count > 0
+      ? `<span class="pill">${ev.espera_count} na fila</span>`
+      : "";
+
+    let actionHtml = "";
+    if (!currentUser) {
+      actionHtml = `<span class="meta">Faça login com Discord para reservar vaga</span>`;
+    } else if (ev.meu_status === "confirmado") {
+      actionHtml = `
+        <div class="status-row">
+          <span style="color: #34d399;">✔ Confirmado</span>
+          <button type="button" class="btn btn-danger" data-id="${ev.id}" data-acao="cancelar">Cancelar Vaga</button>
+        </div>
+      `;
+    } else if (ev.meu_status === "espera") {
+      actionHtml = `
+        <div class="status-row">
+          <span style="color: #fbbf24;">⏳ Na Fila de Espera</span>
+          <button type="button" class="btn btn-outline" data-id="${ev.id}" data-acao="cancelar">Sair da Fila</button>
+        </div>
+      `;
     } else {
-      statusEl.textContent = "Erro ao registrar.";
+      const label = lotado ? "Entrar na Fila de Espera" : "Confirmar Presença";
+      const cls = lotado ? "btn-warning" : "btn-success";
+      actionHtml = `
+        <button type="button" class="btn ${cls}" data-id="${ev.id}" data-acao="inscrever">${label}</button>
+      `;
     }
-  } catch {
-    statusEl.textContent = "API disponível após o deploy no Cloudflare Pages.";
+
+    return `
+      <article class="event-card">
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;">
+            <h3>${ev.titulo}</h3>
+            ${esperaBadge}
+          </div>
+          <p class="meta">Local: ${ev.local} &bull; Data: ${ev.data} às ${ev.horario}</p>
+          <p class="meta">Criado por: ${ev.criador_nome}</p>
+        </div>
+        <div class="event-footer">
+          <div class="occupancy">
+            <span class="meta">Vagas ocupadas:</span>
+            <span>${ev.confirmados_count} / ${ev.capacidade_maxima}</span>
+          </div>
+          ${actionHtml}
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  grid.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      gerirRsvp(Number(btn.dataset.id), btn.dataset.acao);
+    });
+  });
+}
+
+document.getElementById("create-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const payload = Object.fromEntries(new FormData(e.target).entries());
+
+  const res = await fetch("/api/eventos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  if (res.ok) {
+    e.target.reset();
+    carregarEventos();
+  } else {
+    const err = await res.json();
+    alert(err.error || "Erro ao criar evento.");
   }
 });
 
-renderDiscordHeader();
-carregarStatus();
+async function gerirRsvp(eventoId, acao) {
+  const res = await fetch("/api/eventos/rsvp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ evento_id: eventoId, acao })
+  });
+
+  if (res.ok) {
+    carregarEventos();
+  } else {
+    const err = await res.json();
+    alert(err.error || "Erro ao processar inscrição.");
+  }
+}
+
+document.getElementById("btn-refresh").addEventListener("click", carregarEventos);
+
+(async () => {
+  await verificarSessao();
+  await carregarEventos();
+})();

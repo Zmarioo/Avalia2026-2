@@ -1,18 +1,36 @@
--- Esquema Inicial Cloudflare D1 para P26-2A-903A-B199-1285-BB94 (Projeto #32)
-CREATE TABLE IF NOT EXISTS discord_users (
-  user_id TEXT PRIMARY KEY,
-  username TEXT NOT NULL,
-  avatar TEXT,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+-- Esquema Cloudflare D1 para P26-2A-903A-B199-1285-BB94 (Projeto #32 - RSVP)
+
+-- Tabela de Utilizadores (Autenticados via Discord)
+CREATE TABLE IF NOT EXISTS usuarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_id TEXT UNIQUE NOT NULL,
+    nome TEXT NOT NULL,
+    avatar TEXT
 );
 
-CREATE TABLE IF NOT EXISTS project_records (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id TEXT NOT NULL,
-  username TEXT NOT NULL,
-  chave_projeto TEXT NOT NULL,
-  conteudo TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+-- Tabela de Eventos (Palestras, Grupos de Estudo)
+CREATE TABLE IF NOT EXISTS eventos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    criador_id INTEGER NOT NULL,
+    titulo TEXT NOT NULL,
+    local TEXT NOT NULL,
+    data TEXT NOT NULL,
+    horario TEXT NOT NULL,
+    capacidade_maxima INTEGER NOT NULL,
+    FOREIGN KEY (criador_id) REFERENCES usuarios(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_project_records_user ON project_records(user_id);
+-- Tabela de Inscrições e Fila de Espera (RSVP)
+CREATE TABLE IF NOT EXISTS inscricoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evento_id INTEGER NOT NULL,
+    usuario_id INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('confirmado', 'espera', 'cancelado')),
+    data_solicitacao DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (evento_id) REFERENCES eventos(id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+);
+
+-- Índices para otimizar as buscas no banco
+CREATE INDEX IF NOT EXISTS idx_inscricoes_evento ON inscricoes(evento_id);
+CREATE INDEX IF NOT EXISTS idx_eventos_criador ON eventos(criador_id);
